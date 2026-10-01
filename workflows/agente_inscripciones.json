@@ -1,0 +1,599 @@
+{
+  "name": "Agente de Gestión de Inscripciones - Practica 01",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ]
+      },
+      "id": "telegram-trigger",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1400,
+        300
+      ],
+      "webhookId": "gestion-inscripciones-telegram"
+    },
+    {
+      "parameters": {
+        "jsCode": "const message = $json.message || {};\nconst chatId = message.chat?.id;\nconst text = (message.text || '').trim();\nconst userName = message.from?.first_name || 'usuario';\n\nif (!chatId) {\n  return [{ json: { ignore: true } }];\n}\n\nconst store = $getWorkflowStaticData('global');\nif (!store.sessions) {\n  store.sessions = {};\n}\n\nif (!store.sessions[chatId]) {\n  store.sessions[chatId] = {\n    stage: 'idle',\n    nombre_completo: null,\n    cedula_identidad: null,\n    email: null,\n    curso_id: null,\n    curso_nombre: null,\n    metodo_pago: null\n  };\n}\n\nconst session = store.sessions[chatId];\nconst normalized = text.toLowerCase();\n\nif (normalized === '/start' || normalized === '/inscribirme' || normalized === 'inscribirme') {\n  store.sessions[chatId] = {\n    stage: 'nombre',\n    nombre_completo: null,\n    cedula_identidad: null,\n    email: null,\n    curso_id: null,\n    curso_nombre: null,\n    metodo_pago: null\n  };\n\n  return [{\n    json: {\n      chatId,\n      responseType: 'message',\n      response: `Hola ${userName} 👋\\n\\nSoy el Agente de Gestión de Inscripciones.\\n\\nPara comenzar tu inscripción, necesito algunos datos.\\n\\nPor favor, indica tu nombre completo:`,\n      stage: 'nombre'\n    }\n  }];\n}\n\nif (normalized === '/cancelar' || normalized === 'cancelar') {\n  delete store.sessions[chatId];\n\n  return [{\n    json: {\n      chatId,\n      responseType: 'message',\n      response: 'La inscripción ha sido cancelada. Cuando quieras comenzar nuevamente, escribe /inscribirme.'\n    }\n  }];\n}\n\nif (session.stage === 'idle') {\n  return [{\n    json: {\n      chatId,\n      responseType: 'message',\n      response: 'Hola 👋 Para realizar una inscripción escribe /inscribirme.\\n\\nTambién puedes escribir /cancelar para cancelar una inscripción en curso.'\n    }\n  }];\n}\n\nif (session.stage === 'nombre') {\n  if (text.length < 5 || !text.includes(' ')) {\n    return [{\n      json: {\n        chatId,\n        responseType: 'message',\n        response: 'El nombre parece estar incompleto. Por favor, escribe tu nombre y apellido completos.',\n        stage: 'nombre'\n      }\n    }];\n  }\n\n  session.nombre_completo = text;\n  session.stage = 'cedula';\n\n  return [{\n    json: {\n      chatId,\n      responseType: 'message',\n      response: 'Perfecto. Ahora indica tu documento de identidad (cédula):',\n      stage: 'cedula'\n    }\n  }];\n}\n\nif (session.stage === 'cedula') {\n  const cedula = text.replace(/[^0-9A-Za-z-]/g, '');\n\n  if (cedula.length < 5) {\n    return [{\n      json: {\n        chatId,\n        responseType: 'message',\n        response: 'El documento de identidad no parece válido. Por favor, intenta nuevamente.',\n        stage: 'cedula'\n      }\n    }];\n  }\n\n  session.cedula_identidad = cedula;\n  session.stage = 'email';\n\n  return [{\n    json: {\n      chatId,\n      responseType: 'message',\n      response: 'Gracias. Ahora indica tu correo electrónico:',\n      stage: 'email'\n    }\n  }];\n}\n\nif (session.stage === 'email') {\n  const emailRegex = /^[^\\\\s@]+@[^\\\\s@]+\\\\.[^\\\\s@]+$/;\n\n  if (!emailRegex.test(text)) {\n    return [{\n      json: {\n        chatId,\n        responseType: 'message',\n        response: 'El correo electrónico ingresado no es válido. Por favor, escribe un correo válido, por ejemplo: nombre@correo.com',\n        stage: 'email'\n      }\n    }];\n  }\n\n  session.email = text.toLowerCase();\n  session.stage = 'curso';\n\n  return [{\n    json: {\n      chatId,\n      responseType: 'courses_request',\n      stage: 'curso'\n    }\n  }];\n}\n\nif (session.stage === 'curso') {\n  return [{\n    json: {\n      chatId,\n      responseType: 'course_selection',\n      curso_input: text,\n      stage: 'curso'\n    }\n  }];\n}\n\nif (session.stage === 'metodo_pago') {\n  if (text.length < 2) {\n    return [{\n      json: {\n        chatId,\n        responseType: 'message',\n        response: 'Por favor, indica un método de pago válido.',\n        stage: 'metodo_pago'\n      }\n    }];\n  }\n\n  session.metodo_pago = text;\n  session.stage = 'confirmar';\n\n  return [{\n    json: {\n      chatId,\n      responseType: 'confirmation',\n      nombre_completo: session.nombre_completo,\n      cedula_identidad: session.cedula_identidad,\n      email: session.email,\n      curso_id: session.curso_id,\n      curso_nombre: session.curso_nombre,\n      metodo_pago: session.metodo_pago,\n      stage: 'confirmar'\n    }\n  }];\n}\n\nif (session.stage === 'confirmar') {\n  if (normalized === 'si' || normalized === 'sí' || normalized === 'confirmar') {\n    return [{\n      json: {\n        chatId,\n        responseType: 'register',\n        nombre_completo: session.nombre_completo,\n        cedula_identidad: session.cedula_identidad,\n        email: session.email,\n        curso_id: session.curso_id,\n        curso_nombre: session.curso_nombre,\n        metodo_pago: session.metodo_pago\n      }\n    }];\n  }\n\n  if (normalized === 'no' || normalized === 'cancelar') {\n    delete store.sessions[chatId];\n    return [{\n      json: {\n        chatId,\n        responseType: 'message',\n        response: 'La inscripción no fue registrada. Si deseas comenzar nuevamente, escribe /inscribirme.'\n      }\n    }];\n  }\n\n  return [{\n    json: {\n      chatId,\n      responseType: 'message',\n      response: 'Por favor responde SI para confirmar la inscripción o NO para cancelarla.'\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    chatId,\n    responseType: 'message',\n    response: 'No pude interpretar tu solicitud. Escribe /inscribirme para comenzar nuevamente.'\n  }\n}];"
+      },
+      "id": "process-message",
+      "name": "Procesar conversación",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1180,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "courses-request",
+              "leftValue": "={{ $json.responseType }}",
+              "rightValue": "courses_request",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "course-selection",
+              "leftValue": "={{ $json.responseType }}",
+              "rightValue": "course_selection",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "confirmation",
+              "leftValue": "={{ $json.responseType }}",
+              "rightValue": "confirmation",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "register",
+              "leftValue": "={{ $json.responseType }}",
+              "rightValue": "register",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        }
+      },
+      "id": "needs-supabase",
+      "name": "¿Necesita Supabase?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -960,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: $json }];"
+      },
+      "id": "direct-response",
+      "name": "Preparar respuesta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -740,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.response }}"
+      },
+      "id": "telegram-response",
+      "name": "Responder por Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -500,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.SUPABASE_URL + '/rest/v1/cursos?select=id,nombre,descripcion,modalidad,cupos_disponibles,activo&activo=eq.true&order=id.asc' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_ANON_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.SUPABASE_ANON_KEY }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "get-courses",
+      "name": "Consultar cursos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -720,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $('Procesar conversación').first().json;\nconst courses = $input.all().map(item => item.json);\n\nconst chatId = input.chatId;\nconst store = $getWorkflowStaticData('global');\nconst session = store.sessions?.[chatId];\n\nif (!session) {\n  return [{\n    json: {\n      chatId,\n      responseType: 'message',\n      response: 'La sesión de inscripción expiró. Escribe /inscribirme para comenzar nuevamente.'\n    }\n  }];\n}\n\nconst available = courses.filter(c => Number(c.cupos_disponibles) > 0 && c.activo === true);\n\nif (available.length === 0) {\n  return [{\n    json: {\n      chatId,\n      responseType: 'message',\n      response: 'Actualmente no hay cursos con cupos disponibles. Por favor intenta nuevamente más tarde.'\n    }\n  }];\n}\n\nlet response = 'Estos son los cursos disponibles:\\n\\n';\n\nfor (const course of available) {\n  response += `${course.id}. ${course.nombre}\\n`;\n  response += `   Modalidad: ${course.modalidad}\\n`;\n  response += `   Cupos disponibles: ${course.cupos_disponibles}\\n\\n`;\n}\n\nresponse += 'Escribe el número del curso que deseas seleccionar.';\n\nsession.stage = 'curso';\n\nreturn [{\n  json: {\n    chatId,\n    responseType: 'message',\n    response,\n    stage: 'curso'\n  }\n}];"
+      },
+      "id": "format-courses",
+      "name": "Mostrar cursos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -480,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.response }}"
+      },
+      "id": "telegram-courses",
+      "name": "Enviar cursos",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -240,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.SUPABASE_URL + '/rest/v1/cursos?id=eq.' + $('Procesar conversación').first().json.curso_input + '&activo=eq.true&select=id,nombre,descripcion,modalidad,cupos_disponibles,activo' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_ANON_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.SUPABASE_ANON_KEY }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "select-course",
+      "name": "Validar curso seleccionado",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -700,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $('Procesar conversación').first().json;\nconst results = $input.all().map(item => item.json);\nconst chatId = input.chatId;\nconst store = $getWorkflowStaticData('global');\nconst session = store.sessions?.[chatId];\n\nif (!session) {\n  return [{\n    json: {\n      chatId,\n      responseType: 'message',\n      response: 'La sesión de inscripción expiró. Escribe /inscribirme para comenzar nuevamente.'\n    }\n  }];\n}\n\nconst course = results[0];\n\nif (!course) {\n  return [{\n    json: {\n      chatId,\n      responseType: 'message',\n      response: 'El curso seleccionado no existe. Por favor escribe nuevamente el número de un curso válido.'\n    }\n  }];\n}\n\nif (!course.activo) {\n  return [{\n    json: {\n      chatId,\n      responseType: 'message',\n      response: 'El curso seleccionado no se encuentra activo. Por favor selecciona otro curso.'\n    }\n  }];\n}\n\nif (Number(course.cupos_disponibles) <= 0) {\n  return [{\n    json: {\n      chatId,\n      responseType: 'message',\n      response: `El curso \"${course.nombre}\" no tiene cupos disponibles actualmente. Por favor selecciona otro curso.`\n    }\n  }];\n}\n\nsession.curso_id = course.id;\nsession.curso_nombre = course.nombre;\nsession.stage = 'metodo_pago';\n\nreturn [{\n  json: {\n    chatId,\n    responseType: 'message',\n    response: `Has seleccionado: ${course.nombre}\\n\\nCupos disponibles: ${course.cupos_disponibles}\\n\\nAhora indica tu método de pago.`,\n    stage: 'metodo_pago'\n  }\n}];"
+      },
+      "id": "process-course",
+      "name": "Procesar selección de curso",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -460,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.response }}"
+      },
+      "id": "telegram-course-response",
+      "name": "Responder selección",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -220,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $json;\n\nreturn [{\n  json: {\n    chatId: data.chatId,\n    responseType: 'message',\n    response: `Estos son los datos de tu inscripción:\\n\\nNombre: ${data.nombre_completo}\\nDocumento: ${data.cedula_identidad}\\nCorreo: ${data.email}\\nCurso: ${data.curso_nombre}\\nMétodo de pago: ${data.metodo_pago}\\n\\n¿Deseas confirmar la inscripción? Responde SI o NO.`\n  }\n}];"
+      },
+      "id": "confirmation-message",
+      "name": "Mostrar resumen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -700,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.response }}"
+      },
+      "id": "telegram-confirmation",
+      "name": "Solicitar confirmación",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -460,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.SUPABASE_URL + '/rest/v1/estudiantes?telegram_chat_id=eq.' + $('Procesar conversación').first().json.chatId + '&select=id,nombre_completo,cedula_identidad,email,telegram_chat_id' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_ANON_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.SUPABASE_ANON_KEY }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "find-student",
+      "name": "Buscar estudiante",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -700,
+        650
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $('Procesar conversación').first().json;\nconst students = $input.all().map(item => item.json);\nconst existing = students[0];\n\nreturn [{\n  json: {\n    ...input,\n    existingStudentId: existing?.id || null\n  }\n}];"
+      },
+      "id": "process-student",
+      "name": "Procesar estudiante",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -460,
+        650
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL + '/rest/v1/estudiantes' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_ANON_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.SUPABASE_ANON_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ telegram_chat_id: $json.chatId, nombre_completo: $json.nombre_completo, cedula_identidad: $json.cedula_identidad, email: $json.email }) }}",
+        "options": {}
+      },
+      "id": "create-student",
+      "name": "Crear estudiante",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -220,
+        650
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $('Procesar estudiante').first().json;\nconst result = $input.first().json;\n\nconst studentId = input.existingStudentId || result.id;\n\nreturn [{\n  json: {\n    ...input,\n    studentId\n  }\n}];"
+      },
+      "id": "prepare-registration",
+      "name": "Preparar inscripción",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        20,
+        650
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL + '/rest/v1/inscripciones' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_ANON_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.SUPABASE_ANON_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ estudiante_id: $json.studentId, curso_id: $json.curso_id, estado: 'completada', metodo_pago: $json.metodo_pago }) }}",
+        "options": {}
+      },
+      "id": "create-registration",
+      "name": "Crear inscripción",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        650
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $('Preparar inscripción').first().json;\nconst registration = $input.first().json;\nconst inscription = Array.isArray(registration) ? registration[0] : registration;\n\nconst store = $getWorkflowStaticData('global');\nif (store.sessions && store.sessions[input.chatId]) {\n  delete store.sessions[input.chatId];\n}\n\nreturn [{\n  json: {\n    chatId: input.chatId,\n    response: `✅ Inscripción realizada correctamente.\\n\\nNúmero de inscripción: #${inscription.id}\\n\\nEstudiante: ${input.nombre_completo}\\nCurso: ${input.curso_nombre}\\nMétodo de pago: ${input.metodo_pago}\\n\\nGracias por registrarte.`,\n    registrationId: inscription.id\n  }\n}];"
+      },
+      "id": "registration-response",
+      "name": "Confirmar inscripción",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        650
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.response }}"
+      },
+      "id": "telegram-final",
+      "name": "Enviar confirmación",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        740,
+        650
+      ]
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Procesar conversación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Procesar conversación": {
+      "main": [
+        [
+          {
+            "node": "¿Necesita Supabase?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Necesita Supabase?": {
+      "main": [
+        [
+          {
+            "node": "Consultar cursos",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Preparar respuesta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar respuesta": {
+      "main": [
+        [
+          {
+            "node": "Responder por Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar cursos": {
+      "main": [
+        [
+          {
+            "node": "Mostrar cursos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mostrar cursos": {
+      "main": [
+        [
+          {
+            "node": "Enviar cursos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar curso seleccionado": {
+      "main": [
+        [
+          {
+            "node": "Procesar selección de curso",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Procesar selección de curso": {
+      "main": [
+        [
+          {
+            "node": "Responder selección",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mostrar resumen": {
+      "main": [
+        [
+          {
+            "node": "Solicitar confirmación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar estudiante": {
+      "main": [
+        [
+          {
+            "node": "Procesar estudiante",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Procesar estudiante": {
+      "main": [
+        [
+          {
+            "node": "Crear estudiante",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crear estudiante": {
+      "main": [
+        [
+          {
+            "node": "Preparar inscripción",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar inscripción": {
+      "main": [
+        [
+          {
+            "node": "Crear inscripción",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crear inscripción": {
+      "main": [
+        [
+          {
+            "node": "Confirmar inscripción",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirmar inscripción": {
+      "main": [
+        [
+          {
+            "node": "Enviar confirmación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "practica01-gestion-inscripciones",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}
